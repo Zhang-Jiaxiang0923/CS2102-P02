@@ -1,111 +1,173 @@
--- "unknown" VARCHAR lengths standardised to 50 for easy consistency.
--- Lifan: keeping 50, its not mentioned in brief.
+CREATE TABLE category (
+	category_type VARCHAR(50) PRIMARY KEY,
+	max_tier INTEGER NOT NULL CHECK (max_tier >= 1),
 
--- Lifan: I've made some foreign keys DEFERRABLE INITIALLY IMMEDIATE and added some checkers.
-CREATE TABLE CATEGORY (
-	CATEGORY_TYPE VARCHAR(50) PRIMARY KEY,
-	MAX_TIER INTEGER NOT NULL CHECK (MAX_TIER >= 1)
+	UNIQUE (category_type, max_tier)
 );
 
 
-CREATE TABLE YARD (
-	CODE VARCHAR(50) PRIMARY KEY,
-	CATEGORY_TYPE VARCHAR(50) NOT NULL
-		REFERENCES CATEGORY (CATEGORY_TYPE)
-		DEFERRABLE INITIALLY IMMEDIATE
+CREATE TABLE yard (
+	code VARCHAR(50) PRIMARY KEY,
+	category_type VARCHAR(50) NOT NULL,
+	max_tier INTEGER NOT NULL,
+
+	FOREIGN KEY (category_type, max_tier)
+		REFERENCES category (category_type, max_tier)
+		DEFERRABLE INITIALLY IMMEDIATE,
+
+	UNIQUE (code, max_tier)
 );
 
-CREATE TABLE POSITION(
-	BAY INTEGER CHECK (BAY >= 0),
-	ROW INTEGER CHECK (ROW >= 0),
-	TIER INTEGER CHECK (TIER >= 1),
-	
-	CODE VARCHAR(50) REFERENCES YARD (CODE)
+CREATE TABLE position(
+	bay INTEGER CHECK (bay >= 0),
+	row INTEGER CHECK (row >= 0),
+	tier INTEGER,
+	code VARCHAR(50),
+	max_tier INTEGER NOT NULL,
+
+	PRIMARY KEY (bay, row, tier, code),
+
+	FOREIGN KEY (code, max_tier)
+		REFERENCES yard (code, max_tier)
 		DEFERRABLE INITIALLY IMMEDIATE, 
-	-- doesn't need to specify NOT NULL, since it's part of pkey i think
-	PRIMARY KEY (BAY, ROW, TIER, CODE)
+
+	CHECK (tier >= 1 AND tier <= max_tier)
 );
 
-CREATE TABLE COUNTRY (
-	NAME VARCHAR(100) PRIMARY KEY, -- longest name is 54
-	CONTINENT VARCHAR(15) NOT NULL -- longest is 12
+CREATE TABLE country (
+	name VARCHAR(100) PRIMARY KEY, 
+	continent VARCHAR(15) NOT NULL
 );
 
-CREATE TABLE CITY (
-	NAME VARCHAR(200), -- bangkok's city name is 164
-	COUNTRY_NAME VARCHAR(60) REFERENCES COUNTRY (NAME)
+CREATE TABLE city (
+	name VARCHAR(200),
+	country_name VARCHAR(60) 
+		REFERENCES country (name)
 		DEFERRABLE INITIALLY IMMEDIATE,
-	PRIMARY KEY (NAME, COUNTRY_NAME)
+	
+	PRIMARY KEY (name, country_name)
 );
 
-CREATE TABLE COMPANY (
-	COMPANY_CODE VARCHAR(50) PRIMARY KEY,
-	NAME VARCHAR(50) NOT NULL,
+CREATE TABLE company (
+	company_code VARCHAR(50) PRIMARY KEY,
+	name VARCHAR(50) NOT NULL,
+	address VARCHAR(50) NOT NULL, 
+	postal_code VARCHAR(50) NOT NULL,
+	city_name VARCHAR(200) NOT NULL,
+	country_name VARCHAR(60) NOT NULL,
 	
-	ADDRESS VARCHAR(50) NOT NULL, -- should we regex?  Lifan: nah, brief didnt mention a format for address
-	POSTAL_CODE VARCHAR(50) NOT NULL, -- some countries have alphanumeric postal codes
-	CITY_NAME VARCHAR(200) NOT NULL,
-	COUNTRY_NAME VARCHAR(60) NOT NULL,
-	FOREIGN KEY (CITY_NAME, COUNTRY_NAME) 
-		REFERENCES CITY (NAME, COUNTRY_NAME)
+	FOREIGN KEY (city_name, country_name) 
+		REFERENCES city (name, country_name)
 		DEFERRABLE INITIALLY IMMEDIATE
 );
 
-CREATE TABLE CONTAINER (
-	ISO_6346 VARCHAR(15) PRIMARY KEY, -- iso is 11 char
-	CONTENT VARCHAR(50) NOT NULL,
-	COMPANY_CODE VARCHAR(50) NOT NULL
-		REFERENCES COMPANY (COMPANY_CODE)
-		DEFERRABLE INITIALLY IMMEDIATE,
-	--Lifan: check it matches
-	CONSTRAINT CONTAINER_OWNER_PREFIX
-		CHECK (SUBSTRING(ISO_6346 FROM 1 FOR 3) = COMPANY_CODE)
-);
-
-CREATE TABLE STORED_AT (
-	ISO_6346 VARCHAR(15) REFERENCES CONTAINER (ISO_6346),
-	BAY INTEGER NOT NULL,
-	ROW INTEGER NOT NULL,
-	TIER INTEGER NOT NULL,
-	CODE VARCHAR(50) NOT NULL,
-	FOREIGN KEY (BAY, ROW, TIER, CODE) 
-			REFERENCES POSITION (BAY, ROW, TIER, CODE)
-			DEFERRABLE INITIALLY IMMEDIATE,
+CREATE TABLE berth (
+	longitude NUMERIC(8, 5),
+	latitude NUMERIC(8, 5),
 	
-	PRIMARY KEY (ISO_6346),
-	UNIQUE (BAY, ROW, TIER, CODE)
+	-- The specification describes berth codes as natural numbers,
+	-- but the required operations explicitly use codes 'B1' and 'B2'.
+	-- VARCHAR is therefore used to support the prescribed operations.
+	code VARCHAR(50) PRIMARY KEY,
+	
+	CONSTRAINT berth_position UNIQUE (longitude, latitude)
 );
 
-CREATE TABLE BERTH (
-	LONGITUDE NUMERIC(9, 6),
-	LATITUDE NUMERIC(8, 6),
-	-- Lifan: is code VARCHAR better? saw B1 and B2
-	CODE VARCHAR(50) PRIMARY KEY,
-	CONSTRAINT BERTH_POSITION UNIQUE (LONGITUDE, LATITUDE)
-);
+CREATE TABLE ship (
+	mmsi VARCHAR(9) PRIMARY KEY,
+	imo_number VARCHAR(10) UNIQUE NOT NULL,
+	call_sign VARCHAR(20) UNIQUE NOT NULL,
+	name VARCHAR(100) NOT NULL,
+	width DECIMAL(8, 2) NOT NULL CHECK (width > 0),
+	length DECIMAL(8, 2) NOT NULL CHECK (length > 0),
 
-CREATE TABLE SHIP (
-	MMSI VARCHAR(9) PRIMARY KEY,
-	IMO_NUMBER VARCHAR(10) UNIQUE NOT NULL,
-	CALL_SIGN VARCHAR(20) UNIQUE NOT NULL,
-	NAME VARCHAR(100) NOT NULL,
-	WIDTH DECIMAL(8, 2) NOT NULL CHECK (WIDTH > 0),
-	LENGTH DECIMAL(8, 2) NOT NULL CHECK (LENGTH > 0),
-
-	-- Lifan: dock relationship 
-	BERTH_CODE VARCHAR(50) NOT NULL UNIQUE,
-	FOREIGN KEY (BERTH_CODE) REFERENCES BERTH (CODE)
+	-- The dock relationship is represented by berth_code.
+	berth_code VARCHAR(50) NOT NULL UNIQUE,
+	
+	FOREIGN KEY (berth_code) 
+		REFERENCES berth (code)
 		DEFERRABLE INITIALLY IMMEDIATE
 );
 
-CREATE TABLE LOADED_ON (
-	MMSI VARCHAR(9) REFERENCES SHIP (MMSI),
-	ISO_6346 VARCHAR(15) REFERENCES CONTAINER (ISO_6346),
-	PRIMARY KEY (ISO_6346)
-)
+-- stored_at and loaded_on are represented directly by nullable
+-- foreign keys in container instead of separate relationship tables.
+-- This allows the constraint that every container is in exactly one
+-- yard position or on exactly one ship to be enforced using CHECK.
+
+CREATE TABLE container (
+	iso_6346 VARCHAR(15) PRIMARY KEY, 
+	content VARCHAR(50) NOT NULL,
+	company_code VARCHAR(50) NOT NULL,
+
+	mmsi VARCHAR(9),
+	bay INTEGER,
+	row INTEGER,
+	tier INTEGER,
+	code VARCHAR(50),
+
+	support_tier INTEGER,
+
+	FOREIGN KEY (company_code)
+		REFERENCES company (company_code)
+		DEFERRABLE INITIALLY IMMEDIATE,
+
+	FOREIGN KEY (mmsi)
+		REFERENCES ship (mmsi)
+		DEFERRABLE INITIALLY IMMEDIATE,
+
+	FOREIGN KEY (bay, row, tier, code)
+		REFERENCES position (bay, row, tier, code)
+		DEFERRABLE INITIALLY IMMEDIATE,
+	
+	-- Ownership is indicated by the first three letters of the
+	-- container's ISO identification.
+	CHECK (SUBSTRING(iso_6346 FROM 1 FOR 3) = company_code),
+	
+	-- A container must be in exactly one location:
+	-- either on a ship or at one complete yard position.
+	CHECK (
+		(
+			mmsi IS NOT NULL
+			AND bay IS NULL
+			AND row IS NULL
+			AND tier IS NULL
+			AND code IS NULL
+		)
+		OR
+		(
+			mmsi IS NULL
+			AND bay IS NOT NULL
+			AND row IS NOT NULL
+			AND tier IS NOT NULL
+			AND code IS NOT NULL
+		)
+	),
+
+	-- At most one container may occupy a yard position.
+	-- Containers loaded on ships have NULL position attributes.
+	UNIQUE (bay, row, tier, code),
+
+	-- A container above tier 1 must identify the tier immediately below it.
+	CHECK (
+		(mmsi IS NOT NULL AND support_tier IS NULL)
+		OR
+		(
+			mmsi IS NULL
+			AND (
+				(tier = 1 AND support_tier IS NULL)
+				OR
+				(tier > 1 AND support_tier = tier - 1)
+			)
+		)
+	),
+
+	-- The supporting position must be occupied by another container
+	-- in the same yard, bay and row, rather than merely existing.
+	FOREIGN KEY (bay, row, support_tier, code)
+		REFERENCES container (bay, row, tier, code)
+		DEFERRABLE INITIALLY IMMEDIATE
+);
 
 
 
---Lifan: TOADD: Every CONTAINER must appear in exactly one of STORED_AT or LOADED_ON.  
--- POSITION.TIER must not exceed the MAX_TIER of yard. 
--- A container above tier 1 must ahve an oocupied position immediately below it in the same yard, bay and row.
+
