@@ -1,4 +1,9 @@
-SELECT y.code AS yard_code, y.category_type AS yard_type, p.bay AS bay_number, p.row AS row_number, p.tier as tier_number
+SELECT 
+    y.code AS yard_code, 
+    y.category_type AS yard_type, 
+    p.bay AS bay_number, 
+    p.row AS row_number, 
+    p.tier AS tier_number
 FROM position p, yard y
 WHERE y.code = p.code
     AND NOT EXISTS(
