@@ -113,6 +113,7 @@ CREATE TABLE container (
 
 	FOREIGN KEY (mmsi)
 		REFERENCES ship (mmsi)
+		ON DELETE CASCADE
 		DEFERRABLE INITIALLY IMMEDIATE,
 
 	FOREIGN KEY (bay, row, tier, code)
